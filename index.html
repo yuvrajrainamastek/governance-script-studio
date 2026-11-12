@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Human-reviewed Snowflake governance SQL generator for DEV.RAW tables.">
+  <meta name="theme-color" content="#102a2e">
+  <title>Governance Script Studio</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">GS</div>
+        <div>
+          <strong>Governance</strong>
+          <span>Script Studio</span>
+        </div>
+      </div>
+
+      <div class="catalog-summary">
+        <span class="eyebrow">Embedded catalogue</span>
+        <strong id="catalogTableCount">Loading…</strong>
+        <span id="catalogColumnCount">Book 6.xlsx</span>
+      </div>
+
+      <nav class="step-nav" aria-label="Generator steps">
+        <button class="step-link active" data-step="catalogue"><span>01</span>Catalogue</button>
+        <button class="step-link" data-step="masking"><span>02</span>Masking</button>
+        <button class="step-link" data-step="tags"><span>03</span>Tags</button>
+        <button class="step-link" data-step="quality"><span>04</span>Quality</button>
+        <button class="step-link" data-step="documentation"><span>05</span>Documentation</button>
+        <button class="step-link" data-step="controls"><span>06</span>Controls</button>
+        <button class="step-link" data-step="review"><span>07</span>Review & generate</button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="privacy-note">
+          <span class="status-dot"></span>
+          Runs entirely in your browser
+        </div>
+        <span>No AI · No SQL execution</span>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div>
+          <span class="eyebrow">DEV · RAW governance automation</span>
+          <h1 id="pageTitle">Choose a table</h1>
+        </div>
+        <div class="topbar-actions">
+          <button class="button ghost" id="importConfigBtn">Import JSON</button>
+          <button class="button ghost" id="exportConfigBtn" disabled>Export JSON</button>
+          <input id="importConfigInput" type="file" accept="application/json,.json" hidden>
+        </div>
+      </header>
+
+      <div id="globalNotice" class="notice warning hidden" role="status"></div>
+
+      <section class="step-panel active" data-panel="catalogue">
+        <div class="section-heading">
+          <div>
+            <span class="step-kicker">Step 1</span>
+            <h2>Select and verify the physical table</h2>
+            <p>Book 6 provides the starting schema. Compare it with Snowflake before approving any generated scripts.</p>
+          </div>
+        </div>
+
+        <div class="grid two-one">
+          <article class="card table-picker-card">
+            <label for="tableSearch">Find a DEV.RAW table</label>
+            <div class="search-box">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z"/></svg>
+              <input id="tableSearch" type="search" placeholder="Search by table name…" autocomplete="off">
+            </div>
+            <div id="tableResults" class="table-results" role="listbox" aria-label="DEV RAW tables"></div>
+          </article>
+
+          <article class="card selection-card">
+            <span class="eyebrow">Selected table</span>
+            <h3 id="selectedTableName">Nothing selected</h3>
+            <div class="metric-row">
+              <div><strong id="selectedColumnCount">—</strong><span>columns</span></div>
+              <div><strong id="suggestionCount">—</strong><span>review prompts</span></div>
+              <div><strong id="overrideCount">—</strong><span>overrides</span></div>
+            </div>
+            <button class="button secondary full" id="copySchemaQueryBtn" disabled>Copy live-schema query</button>
+          </article>
+        </div>
+
+        <article class="card hidden" id="schemaReviewCard">
+          <div class="card-header">
+            <div>
+              <span class="eyebrow">Schema review</span>
+              <h3>Catalogue columns and live overrides</h3>
+            </div>
+            <button class="button subtle" id="quickAddInsertedAt">+ Add INSERTED_AT</button>
+          </div>
+          <div class="schema-toolbar">
+            <input id="schemaColumnFilter" type="search" placeholder="Filter columns…">
+            <span id="schemaReviewSummary"></span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>#</th><th>Column</th><th>Type</th><th>Nullable</th><th>Source</th><th>Include</th></tr></thead>
+              <tbody id="schemaTableBody"></tbody>
+            </table>
+          </div>
+          <form id="addColumnForm" class="inline-form">
+            <input name="name" required placeholder="Additional column name">
+            <select name="type" required>
+              <option value="TEXT">TEXT</option><option value="NUMBER">NUMBER</option>
+              <option value="TIMESTAMP_NTZ">TIMESTAMP_NTZ</option><option value="DATE">DATE</option>
+              <option value="BOOLEAN">BOOLEAN</option><option value="FLOAT">FLOAT</option>
+              <option value="VARIANT">VARIANT</option>
+            </select>
+            <select name="nullable"><option value="YES">Nullable</option><option value="NO">Not nullable</option></select>
+            <button class="button secondary" type="submit">Add override</button>
+          </form>
+          <label class="confirmation-row">
+            <input type="checkbox" id="liveSchemaConfirmed">
+            <span>I compared this list with current <code>DEV.INFORMATION_SCHEMA.COLUMNS</code>.</span>
+          </label>
+        </article>
+      </section>
+
+      <section class="step-panel" data-panel="masking">
+        <div class="section-heading">
+          <div><span class="step-kicker">Step 2</span><h2>Review classification and masking</h2><p>Suggestions are deterministic review prompts. Nothing is selected automatically.</p></div>
+          <button class="button secondary" id="applySuggestionsBtn">Apply visible suggestions</button>
+        </div>
+        <article class="card">
+          <div class="toolbar split">
+            <div class="segmented" role="group" aria-label="Masking filter">
+              <button class="active" data-mask-filter="all">All columns</button>
+              <button data-mask-filter="suggested">Suggested</button>
+              <button data-mask-filter="selected">Selected</button>
+            </div>
+            <input id="maskColumnFilter" type="search" placeholder="Filter columns…">
+          </div>
+          <div class="table-wrap tall">
+            <table class="decision-table">
+              <thead><tr><th>Column</th><th>Type</th><th>Review prompt</th><th>Semantic category</th><th>Privacy category</th><th>GDF_PII tier</th><th>Reason</th></tr></thead>
+              <tbody id="maskingTableBody"></tbody>
+            </table>
+          </div>
+          <label class="confirmation-row">
+            <input type="checkbox" id="maskingReviewConfirmed">
+            <span>I reviewed every column, including free text, identifiers, consent fields and unsupported Boolean/Variant fields.</span>
+          </label>
+        </article>
+      </section>
+
+      <section class="step-panel" data-panel="tags">
+        <div class="section-heading"><div><span class="step-kicker">Step 3</span><h2>Assign governance tags</h2><p>Choose critical data elements and derived identifiers, then confirm the object-level tags.</p></div></div>
+        <div class="grid two">
+          <article class="card">
+            <span class="eyebrow">Object tags</span>
+            <div class="form-grid">
+              <label>Source system<input id="sourceSystem" value="DUTCHIE"></label>
+              <label>Layer<input id="layerTag" value="RAW"></label>
+              <label>Retention<input id="retentionTag" value="NON_RECORD"></label>
+            </div>
+          </article>
+          <article class="card compact-info">
+            <span class="eyebrow">Selection guide</span>
+            <p><strong>CDE</strong> identifies columns with approved business-critical meaning.</p>
+            <p><strong>PII_DERIVED</strong> marks identifiers derived from or resolvable to a person.</p>
+          </article>
+        </div>
+        <article class="card">
+          <div class="schema-toolbar"><input id="tagColumnFilter" type="search" placeholder="Filter columns…"><span id="tagSelectionSummary"></span></div>
+          <div class="table-wrap tall"><table><thead><tr><th>Column</th><th>Type</th><th>CDE</th><th>PII derived</th></tr></thead><tbody id="tagTableBody"></tbody></table></div>
+        </article>
+      </section>
+
+      <section class="step-panel" data-panel="quality">
+        <div class="section-heading"><div><span class="step-kicker">Step 4</span><h2>Define data-quality controls</h2><p>Keys and thresholds require evidence. Leave a metric unselected when it has not been proven.</p></div></div>
+        <div class="grid two">
+          <article class="card form-card">
+            <label>DMF schedule<input id="dmfSchedule" value="USING CRON 0 6 * * * UTC"></label>
+            <label>Freshness timestamp<select id="freshnessColumn"><option value="">No freshness DMF</option></select></label>
+            <label>Approved baseline<textarea id="baselineNote" rows="3" placeholder="Example: approximately 356K rows, ±20%; confirmed 12 Nov 2026"></textarea></label>
+            <label>Expected DMF results<textarea id="qualityExpected" rows="3" placeholder="Expected duplicate count, null baseline and freshness threshold"></textarea></label>
+          </article>
+          <article class="card">
+            <span class="eyebrow">Column metrics</span>
+            <h3>Duplicate key</h3><div id="duplicateKeyOptions" class="check-grid"></div>
+            <h3>Null-count columns</h3><div id="nullCountOptions" class="check-grid"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="step-panel" data-panel="documentation">
+        <div class="section-heading"><div><span class="step-kicker">Step 5</span><h2>Document the table</h2><p>Comments become Snowflake metadata. Business terms remain review evidence for Collibra or the chosen catalogue.</p></div></div>
+        <article class="card form-card">
+          <label>Approved table description<textarea id="tableComment" rows="4" placeholder="What the table contains, source, grain, sensitivity and important limitations"></textarea></label>
+          <label>Business terms<input id="businessTerms" placeholder="Comma-separated, e.g. Loyalty Registration, Customer Consent"></label>
+        </article>
+        <article class="card">
+          <div class="schema-toolbar"><input id="commentColumnFilter" type="search" placeholder="Filter columns…"><span>Only completed comments are generated.</span></div>
+          <div id="columnComments" class="comment-list"></div>
+        </article>
+      </section>
+
+      <section class="step-panel" data-panel="controls">
+        <div class="section-heading"><div><span class="step-kicker">Step 6</span><h2>Access and de-identification decisions</h2><p>Record explicit decisions even when no policy or transformation is applied.</p></div></div>
+        <div class="grid two">
+          <article class="card form-card">
+            <span class="eyebrow">Operational context</span>
+            <label>Readers to notify<input id="readers" placeholder="Comma-separated users or teams"></label>
+            <details>
+              <summary>Execution roles</summary>
+              <div class="form-grid roles-grid">
+                <label>Governance<input data-role="governance" value="GOVERNANCE_ADMIN"></label>
+                <label>Warehouse<input data-role="warehouse" value="GOV_WH"></label>
+                <label>Owner<input data-role="owner" value="PLATFORM_ADMIN"></label>
+                <label>Ingest<input data-role="ingest" value="SVC_INGEST_PROD"></label>
+                <label>Data engineer<input data-role="data_engineer" value="DATA_ENGINEER"></label>
+                <label>Data modeler<input data-role="data_modeler" value="DATA_MODELER"></label>
+              </div>
+            </details>
+          </article>
+          <article class="card form-card">
+            <span class="eyebrow">Row access</span>
+            <label class="switch-row"><input type="checkbox" id="rowAccessApply"><span>Attach an approved existing row-access policy</span></label>
+            <div id="rowAccessFields" class="conditional-fields hidden">
+              <label>Fully qualified policy name<input id="rowPolicyName" placeholder="GOVERNANCE.POLICIES.POLICY_NAME"></label>
+              <label>Policy columns<select id="rowPolicyColumns" multiple></select></label>
+            </div>
+            <label>Decision and reason<textarea id="rowAccessReason" rows="4" placeholder="Why row access is or is not applied"></textarea></label>
+          </article>
+        </div>
+        <article class="card form-card">
+          <span class="eyebrow">De-identification / load-time treatment</span>
+          <label>Approved decision<textarea id="deidDecision" rows="4" placeholder="Example: EMAIL and PHONE are masked only; COMMENT is nulled by the DEV loader"></textarea></label>
+          <div class="card-header"><h3>Acceptance checks</h3><button class="button subtle" id="addDeidCheck">+ Add check</button></div>
+          <div id="deidChecks" class="repeat-list"></div>
+        </article>
+      </section>
+
+      <section class="step-panel" data-panel="review">
+        <div class="section-heading"><div><span class="step-kicker">Step 7</span><h2>Review and generate</h2><p>The generator creates SQL files only. It never connects to Snowflake or executes statements.</p></div></div>
+        <div class="grid two-one">
+          <article class="card">
+            <span class="eyebrow">Validation</span>
+            <div id="validationResults" class="validation-list"></div>
+            <label class="confirmation-row approval">
+              <input type="checkbox" id="humanApproved">
+              <span>I confirm these decisions have the required governance, privacy and data-owner approval.</span>
+            </label>
+            <button class="button primary full" id="generateBtn">Generate eight SQL scripts</button>
+          </article>
+          <article class="card summary-card">
+            <span class="eyebrow">Configuration summary</span>
+            <div id="configSummary"></div>
+          </article>
+        </div>
+        <article class="card hidden" id="generatedCard">
+          <div class="card-header">
+            <div><span class="eyebrow">Generated output</span><h3>Eight reviewed SQL scripts</h3></div>
+            <button class="button primary" id="downloadZipBtn">Download ZIP</button>
+          </div>
+          <div id="generatedFiles" class="file-grid"></div>
+          <details class="sql-preview"><summary>Preview selected script</summary><pre id="scriptPreview"></pre></details>
+        </article>
+      </section>
+
+      <footer class="workspace-footer">
+        <span>Governance Script Studio · deterministic static generator</span>
+        <span id="saveStatus">No table selected</span>
+      </footer>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="app.js" defer></script>
+</body>
+</html>
