@@ -1,116 +1,137 @@
-# Snowflake CoCo review workflow
+# Autonomous Snowflake CoCo review workflow
 
 ## Purpose
 
-The CoCo handoff reduces repetitive evidence collection without turning an AI recommendation into a governance decision. It sits between table selection and the existing seven-step human review.
+The CoCo handoff automates evidence collection and preliminary field completion. There is no human relay between giving CoCo the task and receiving its completed JSON.
 
 ```text
 Select table
     ↓
-Download table-specific review kit
+Download autonomous CoCo task
     ↓
-Run reviewed queries in Snowflake and ask CoCo for JSON
+Give task to CoCo Agent mode
     ↓
-Import JSON recommendations
+CoCo executes read-only SQL and produces completed JSON
     ↓
-Governance engineer verifies and approves each section
+Import JSON and begin human governance review
     ↓
 Generate the existing eight governance SQL files
 ```
 
-The browser never calls Snowflake or CoCo. The user controls both the worksheet execution and the JSON pasted or imported back into the browser.
+The browser itself never connects to Snowflake or calls CoCo. The single file handoff starts the autonomous portion; the next user action is importing or pasting CoCo's completed response for review.
 
-## Review kit contents
+## Required CoCo capability
+
+Use Snowflake CoCo in Agent mode with:
+
+- an active Snowflake connection;
+- a current warehouse;
+- `USAGE` on the selected database and schema;
+- `SELECT` on the selected table;
+- access to the `SnowflakeSqlExecute` tool.
+
+Snowflake documents that CoCo's Snowflake tools can execute SQL directly and that Agent mode has SQL-execution capability. Plan mode also permits read-only SQL, but the generated task explicitly requests Agent mode so it can optionally save the finished JSON file.
+
+Official references:
+
+- [CoCo CLI agent tools](https://docs.snowflake.com/en/user-guide/cortex-code/tools)
+- [Agent mode and Plan mode](https://docs.snowflake.com/en/user-guide/cortex-code/cortex-code-desktop/agent-mode-and-plan-mode)
+- [CoCo CLI reference](https://docs.snowflake.com/en/user-guide/cortex-code/cli-reference)
+
+## Generated task
 
 The downloaded filename is:
 
 ```text
-DEV_RAW_<TABLE>_coco_review_kit.sql
+DEV_RAW_<TABLE>_coco_autonomous_review.md
 ```
 
-It contains:
+Give the entire Markdown file to CoCo. Its instructions require CoCo to:
 
-1. current-session context;
-2. `DEV.INFORMATION_SCHEMA.TABLES` metadata;
-3. the complete live column definition from `DEV.INFORMATION_SCHEMA.COLUMNS`;
-4. an exact row-count query;
-5. aggregate-only profile batches over at most 10,000 rows;
-6. a CoCo instruction block and versioned JSON response contract.
+1. use `SnowflakeSqlExecute` itself;
+2. execute every query in the embedded SQL plan;
+3. retain the result sets in its working context;
+4. retry failed queries only with read-only corrections;
+5. avoid DDL, DML, grants and metadata changes;
+6. avoid selecting or returning raw source values;
+7. produce one assessment for every live column;
+8. return only the completed version-2 JSON object;
+9. save the same JSON to its workspace when file-write tools are available.
 
-The profile batches return null count, approximate distinct count and minimum/maximum rendered length. They do not select raw column values. Columns are divided into groups of 24 so wide tables do not create one unmanageably large aggregate statement.
+The user does not run the queries, click **Run**, copy result grids or answer questions between these steps.
 
-The configured role and warehouse are emitted as commented guidance. The reviewer must use a role with `USAGE` on the database/schema and `SELECT` on the table.
+## SQL evidence plan
 
-## Cost and privacy review
+The task contains:
 
-The exact count can scan the full table. The aggregate profile queries each read up to 10,000 rows and wide tables produce multiple batches. Before execution:
+1. current session context;
+2. `INFORMATION_SCHEMA.TABLES` metadata;
+3. the complete live schema from `INFORMATION_SCHEMA.COLUMNS`;
+4. an exact row count;
+5. aggregate profiles in batches of at most 24 columns over at most 10,000 rows.
 
-- select an appropriately sized warehouse;
-- inspect the query count for very wide tables;
-- run only in the authorized Snowflake account;
-- do not paste raw result values into CoCo;
-- do not add `SELECT *` sample output to the handoff;
-- retain the returned JSON according to the team's evidence-retention rules.
+The profiles return null count, approximate distinct count and minimum/maximum rendered length. They do not return raw column values.
 
-Aggregate statistics can still reveal information about very small populations. Treat the output as governance evidence and share it only with authorized reviewers.
+The embedded catalogue is only the starting point for profile construction. CoCo is instructed to diagnose schema drift with the executed live-schema result and use read-only corrections. Its final column assessments must match the live schema, not merely the snapshot.
 
-## Response contract
+## Completion certificate
 
-CoCo must return one JSON object with `coco_review_version: 1` and the same fully qualified table selected in the application.
-
-The major sections are:
-
-| Section | Purpose |
-|---|---|
-| `evidence.row_count` | Exact baseline returned by the worksheet. |
-| `evidence.observed_schema` | Complete live schema copied from `INFORMATION_SCHEMA.COLUMNS`. |
-| `evidence.notes` | Evidence limitations or questions for a human. |
-| `recommendations.object_tags` | Preliminary source, layer and retention values. |
-| `recommendations.columns` | One assessment for every live column. |
-| `recommendations.quality` | Candidate key, freshness and baseline notes. |
-| `recommendations.row_access` | Preliminary decision/reason; policy names must not be invented. |
-| `recommendations.deidentification` | Loader-treatment questions and safe aggregate acceptance checks. |
-| `recommendations.review_notes` | Uncertainty and required follow-up. |
-
-Each `recommendations.columns` item may contain:
+The response contract is version 2. It includes:
 
 ```json
 {
-  "name": "EMAIL",
-  "type": "TEXT",
-  "nullable": "YES",
-  "semantic_category": "EMAIL",
-  "privacy_category": "IDENTIFIER",
-  "mask_tier": "PARTIAL_EMAIL",
-  "masking_reason": "Direct contact identifier",
-  "cde": false,
-  "pii_derived": false,
-  "null_check": true,
-  "comment": "Email supplied during loyalty registration",
-  "rationale": "Name and type support the recommendation; confirm values and purpose",
-  "confidence": "MEDIUM"
+  "coco_review_version": 2,
+  "table": "DEV.RAW.<TABLE>",
+  "status": "COMPLETE",
+  "execution": {
+    "mode": "AGENT",
+    "sql_tool": "SnowflakeSqlExecute",
+    "sql_tool_used": true,
+    "queries_planned": 5,
+    "queries_succeeded": 5,
+    "failed_queries": []
+  }
 }
 ```
 
-Allowed masking tiers are `FULL`, `PARTIAL_EMAIL`, `PARTIAL_PHONE`, `PARTIAL_ZIP`, `CONDITIONAL` or empty. Allowed privacy categories are `IDENTIFIER`, `QUASI_IDENTIFIER`, `SENSITIVE` or empty.
+The numbers vary by table width. CoCo must update them to the queries it actually ran, including any read-only corrections.
 
-## Import behavior
+The frontend rejects the response unless:
 
-The importer:
+- `status` is `COMPLETE`;
+- `sql_tool_used` is `true`;
+- planned and successful query counts are equal;
+- `failed_queries` is empty;
+- exact row-count evidence exists;
+- live-schema evidence exists;
+- every live column has exactly one recommendation;
+- there are no recommendations for columns absent from the executed schema;
+- masking tiers and privacy categories use supported values.
 
-- rejects a missing or unsupported response version;
-- rejects a response for a different table;
-- accepts plain JSON or JSON contained in a Markdown code fence;
-- accepts the response through direct paste or a local `.json`/`.txt` file;
-- compares `observed_schema` with the embedded catalogue;
-- creates preliminary additions/exclusions from that comparison;
-- ignores unsupported masking tiers;
-- ignores object-tag names other than `SOURCE_SYSTEM`, `LAYER` and `RETENTION`;
-- accepts imported acceptance expressions only when they match a bounded aggregate form and contain no statement keywords or SQL delimiters;
-- records missing assessments, duplicates and other concerns as visible warnings;
-- stores provenance under `automation_review`.
+This prevents a name-only response from being presented as an executed review.
 
-The import can prefill the application but cannot complete it. It always resets:
+## Recommendation contents
+
+After successful execution, CoCo returns:
+
+- observed live schema and exact row count;
+- preliminary classification and masking recommendations;
+- CDE and derived-PII candidates;
+- duplicate-key, null and freshness candidates;
+- table and column description drafts;
+- business-term candidates;
+- row-access rationale;
+- de-identification questions and bounded aggregate checks;
+- confidence and rationale for each live column;
+- unresolved questions in review notes.
+
+CoCo is instructed to leave unsupported decisions empty rather than inventing them. In particular, it must not invent policy names, legal classifications, retention approvals or loader behavior.
+
+## Import and human review
+
+Paste CoCo's JSON into the handoff card or import the JSON file saved by CoCo. The importer validates the completion certificate, table, schema coverage and supported values before prefilling the application.
+
+The import is the beginning of human review, not the end. These fields always remain false:
 
 ```text
 live_schema_confirmed = false
@@ -118,21 +139,14 @@ masking_review_confirmed = false
 human_approved = false
 ```
 
-## Governance engineer checklist
+The governance engineer reviews CoCo's completed output, corrects it where necessary, obtains required owner/privacy approvals and then generates the eight final SQL files.
 
-After import:
+## Cost and privacy
 
-1. Read every warning shown in the handoff card.
-2. Independently compare the imported schema with Snowflake.
-3. Review every column, including fields CoCo left empty.
-4. Validate business meaning with the data owner or source-system SME.
-5. Verify masking tiers against actual shared policy behavior.
-6. Prove any proposed key using exact duplicate queries.
-7. Approve null/freshness expectations from operating history, not a single sample.
-8. Confirm row-access and de-identification decisions with the responsible owners.
-9. Complete the normal confirmation checkboxes.
-10. Generate and code-review the eight final SQL files.
+The exact count can scan the full table. Each profile query reads up to 10,000 rows, and wide tables require multiple profile batches. CoCo uses the currently selected Snowflake warehouse, so warehouse sizing and query limits remain operational prerequisites.
 
-## Limitations
+Aggregate statistics can reveal information about very small populations. Treat the JSON as governance evidence. Do not modify the task to return samples or raw values, and retain the result according to the team's approved evidence process.
 
-CoCo may make incorrect inferences from names, types or aggregate profiles. A 10,000-row profile is not proof of uniqueness, completeness, long-term thresholds, business meaning, legal classification or policy eligibility. Empty recommendations are expected when evidence is insufficient; they must be resolved by a human rather than guessed.
+## Failure behavior
+
+If CoCo cannot access the table, lacks a warehouse, reaches a timeout or cannot complete a profile, it must return `status: "BLOCKED"` and identify the failed query. The frontend deliberately refuses to import that response as a completed review. Resolve the Snowflake access or execution issue and give the same task to CoCo again.

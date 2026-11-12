@@ -99,14 +99,14 @@
             </div>
             <span class="source-pill" id="cocoReviewStatusPill">Not imported</span>
           </div>
-          <p class="coco-intro">Generate a table-specific, aggregate-only SQL guide for Snowflake. CoCo uses its result sets and the embedded response contract to return structured JSON that can prefill this review.</p>
+          <p class="coco-intro">Generate one autonomous task file. CoCo executes its read-only Snowflake queries, analyzes the aggregate evidence and returns structured JSON for governance review.</p>
           <div class="handoff-flow" aria-label="CoCo review workflow">
-            <div><span>1</span><strong>Download guide</strong><small>Table metadata, safe profiling queries and response contract</small></div>
-            <div><span>2</span><strong>Run with CoCo</strong><small>Execute in Snowflake and ask CoCo for JSON only</small></div>
-            <div><span>3</span><strong>Import result</strong><small>Prefill recommendations, then complete human review</small></div>
+            <div><span>1</span><strong>Download task</strong><small>Self-contained agent instructions, profiling queries and response contract</small></div>
+            <div><span>2</span><strong>Give it to CoCo</strong><small>CoCo executes every query itself and produces the completed JSON</small></div>
+            <div><span>3</span><strong>Review result</strong><small>Import recommendations and begin governance review</small></div>
           </div>
           <div class="coco-actions">
-            <button class="button secondary" id="downloadCocoKitBtn">Download CoCo review kit</button>
+            <button class="button secondary" id="downloadCocoKitBtn">Download autonomous CoCo task</button>
             <button class="button ghost" id="importCocoReviewBtn">Import CoCo review JSON</button>
             <input id="importCocoReviewInput" type="file" accept="application/json,.json,.txt" hidden>
           </div>
@@ -119,7 +119,7 @@
           <ul id="cocoReviewWarnings" class="review-import-warnings hidden"></ul>
           <details>
             <summary>Automation boundary</summary>
-            <p>The import contains evidence and recommendations, not approvals. Live-schema, masking and final governance confirmations are always reset and must be completed by a governance engineer.</p>
+            <p>CoCo must certify that every planned query ran through SnowflakeSqlExecute before the application accepts its output. The imported evidence and recommendations are not approvals; live-schema, masking and final governance confirmations remain for the governance engineer.</p>
           </details>
         </article>
 

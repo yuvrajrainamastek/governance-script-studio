@@ -47,15 +47,14 @@ The application deliberately resets live-schema confirmation when an included co
 
 After selecting a table, the **Snowflake CoCo review handoff** appears on the Catalogue screen.
 
-1. Select **Download CoCo review kit**.
-2. Open the generated SQL file in an authorized Snowflake worksheet.
-3. Review the warehouse-cost warning and run the required metadata, count and aggregate-profile sections.
-4. Give CoCo the result sets and the prompt embedded at the end of the file.
-5. Paste CoCo's JSON-only response directly into the handoff card, or save it as a `.json`/`.txt` file and select **Import CoCo review JSON**.
-6. Apply the pasted recommendations or select the saved response file.
-7. Read every import warning, compare the imported live schema and then begin the normal human review.
+1. Select **Download autonomous CoCo task**.
+2. Give the generated Markdown task file to Snowflake CoCo in Agent mode with a connection authorized to read the selected table.
+3. CoCo uses `SnowflakeSqlExecute` to run every metadata, count and aggregate-profile query itself. Do not manually relay result sets.
+4. CoCo returns the completed JSON and, when file tools are available, saves the same JSON in its workspace.
+5. Paste that JSON directly into the handoff card, or import the saved `.json` file.
+6. Read every import warning and begin the normal governance review.
 
-The import can prefill schema overrides, classification, masking, tags, quality candidates, descriptions, row-access rationale and de-identification notes. It does not import roles or approvals. `live_schema_confirmed`, `masking_review_confirmed` and `human_approved` are always reset to `false`.
+The application accepts the response only when CoCo reports `COMPLETE`, certifies use of `SnowflakeSqlExecute`, reports that every planned query succeeded, supplies the exact row count and live schema, and assesses every live column exactly once. The import can then prefill schema overrides, classification, masking, tags, quality candidates, descriptions, row-access rationale and de-identification notes. It does not import roles or approvals. `live_schema_confirmed`, `masking_review_confirmed` and `human_approved` are always reset to `false`.
 
 See [Snowflake CoCo review workflow](COCO_REVIEW_WORKFLOW.md) for the full contract and safety boundary.
 

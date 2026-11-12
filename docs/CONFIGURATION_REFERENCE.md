@@ -49,10 +49,19 @@ Top-level structure:
 ```json
 "automation_review": {
   "source": "SNOWFLAKE_COCO",
-  "review_version": 1,
+  "review_version": 2,
+  "status": "COMPLETE",
   "imported_at": "2026-11-12T12:30:00.000Z",
   "generated_at": "2026-11-12T12:25:00Z",
   "assessed_columns": 14,
+  "execution": {
+    "mode": "AGENT",
+    "sql_tool": "SnowflakeSqlExecute",
+    "sql_tool_used": true,
+    "queries_planned": 5,
+    "queries_succeeded": 5,
+    "failed_queries": []
+  },
   "evidence": { "row_count": 42, "observed_schema": [] },
   "warnings": []
 }

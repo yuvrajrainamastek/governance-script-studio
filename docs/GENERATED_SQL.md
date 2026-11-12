@@ -1,6 +1,6 @@
 # Generated SQL reference
 
-The optional `<TABLE>_coco_review_kit.sql` is a preliminary evidence-gathering worksheet, not one of the eight governance execution files. It contains no governance DDL and is documented separately in [Snowflake CoCo review workflow](COCO_REVIEW_WORKFLOW.md).
+The optional `<TABLE>_coco_autonomous_review.md` is a self-contained CoCo agent task, not one of the eight governance execution files. It instructs CoCo to execute a read-only evidence plan and is documented separately in [Snowflake CoCo review workflow](COCO_REVIEW_WORKFLOW.md).
 
 ## Execution order
 

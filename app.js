@@ -5,7 +5,7 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const STORAGE_PREFIX = "governance-script-studio:v1:";
 const MASK_TIERS = ["", "FULL", "PARTIAL_EMAIL", "PARTIAL_PHONE", "PARTIAL_ZIP", "CONDITIONAL"];
 const RESERVED = new Set(["COMMENT", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP"]);
-const COCO_REVIEW_VERSION = 1;
+const COCO_REVIEW_VERSION = 2;
 const COCO_PROFILE_BATCH_SIZE = 24;
 
 let catalogue = { tables: [] };
@@ -233,7 +233,16 @@ function cocoReviewContract() {
   return {
     coco_review_version: COCO_REVIEW_VERSION,
     table: state.table,
+    status: "COMPLETE",
     generated_at: "<ISO-8601 timestamp>",
+    execution: {
+      mode: "AGENT",
+      sql_tool: "SnowflakeSqlExecute",
+      sql_tool_used: true,
+      queries_planned: 4 + Math.ceil(currentColumns().length / COCO_PROFILE_BATCH_SIZE),
+      queries_succeeded: 4 + Math.ceil(currentColumns().length / COCO_PROFILE_BATCH_SIZE),
+      failed_queries: []
+    },
     evidence: {
       row_count: null,
       profile_row_limit: 10000,
@@ -286,13 +295,28 @@ function cocoReviewContract() {
 
 function cocoReviewPrompt() {
   const contract = JSON.stringify(cocoReviewContract(), null, 2).replaceAll("*/", "* /");
-  return `SNOWFLAKE COCO REVIEW TASK
+  const outputName = `${state.table.replaceAll(".", "_")}_coco_review.json`;
+  return `SNOWFLAKE COCO AUTONOMOUS GOVERNANCE REVIEW
 
-Review only ${state.table}. Use the metadata, exact row count and aggregate-only sample profiles returned by this worksheet. Do not expose, quote or return raw source values. Treat name-based inferences as recommendations, not facts.
+You are Snowflake CoCo operating as an agent with access to SnowflakeSqlExecute. Complete this task autonomously. Do not ask the user to run SQL, click Run, copy result sets, or answer questions between steps.
 
-Return exactly one valid JSON object matching the contract below. Do not wrap it in Markdown. Populate evidence.observed_schema from DEV.INFORMATION_SCHEMA.COLUMNS. Include one recommendations.columns entry for every live column. Use only these masking tiers: FULL, PARTIAL_EMAIL, PARTIAL_PHONE, PARTIAL_ZIP, CONDITIONAL, or an empty string. Use only these privacy categories: IDENTIFIER, QUASI_IDENTIFIER, SENSITIVE, or an empty string.
+EXECUTION REQUIREMENTS
+1. Review only ${state.table} using the current Snowflake connection, role and warehouse.
+2. Execute every read-only query in the SQL EXECUTION PLAN below yourself with SnowflakeSqlExecute, in order.
+3. If a query fails, diagnose and retry only with a read-only correction. Never execute DDL, DML, grants, tags, policies, comments, procedures or table changes.
+4. Do not select, expose, quote, save or return raw source values. Use only metadata and the aggregate result sets defined in this kit.
+5. Keep all query results in your working context and use them to complete the response. Treat name-based inferences as recommendations, not facts.
+6. Set status to COMPLETE only after every planned query succeeds. Set sql_tool_used to true only if SnowflakeSqlExecute actually ran. Update queries_planned and queries_succeeded to the number actually executed, including read-only corrections or additional live-column profiles. If any query remains unsuccessful, return status BLOCKED, record it in execution.failed_queries and do not fabricate recommendations.
+7. Populate evidence.observed_schema from the executed INFORMATION_SCHEMA query and evidence.row_count from the executed exact-count query.
+8. Include exactly one recommendations.columns entry for every live column, even when the recommendation fields must remain empty. Explain uncertainty in rationale and confidence.
 
-Recommend values only when supported by metadata or aggregate evidence. Put uncertainty in rationale, confidence and recommendations.review_notes. Never invent a row-access policy name, business definition, retention decision, de-identification treatment or approval. Leave unsupported values empty and explain what a human must verify.
+RESPONSE REQUIREMENTS
+- Return exactly one valid JSON object matching the contract below. Do not wrap it in Markdown or add explanatory text.
+- Use only these masking tiers: FULL, PARTIAL_EMAIL, PARTIAL_PHONE, PARTIAL_ZIP, CONDITIONAL, or an empty string.
+- Use only these privacy categories: IDENTIFIER, QUASI_IDENTIFIER, SENSITIVE, or an empty string.
+- Recommend values only when supported by executed metadata or aggregate evidence.
+- Never invent a row-access policy name, business definition, retention decision, de-identification treatment or approval. Leave unsupported values empty and identify the review question.
+- If file-write tools are available, also save the exact JSON object to ${outputName}. The printed response must still be the JSON object only.
 
 JSON CONTRACT
 ${contract}`;
@@ -328,28 +352,27 @@ FROM REVIEW_SAMPLE;`);
 function generateCocoReviewKit() {
   const [database, schema, tableName] = state.table.split(".");
   const columns = currentColumns();
-  return `/*
-** Governance Script Studio - Snowflake CoCo review kit
-** Table: ${state.table}
-** Purpose: gather metadata and aggregate evidence for a preliminary governance review.
-** Boundary: this worksheet does not apply tags, policies, comments, grants or table changes.
-** Cost note: the exact count and sample-profile batches query the source table. Review warehouse cost before running.
-*/
+  return `# Autonomous Snowflake CoCo governance review
 
--- Use a role and warehouse with USAGE on ${database}.${schema} and SELECT on ${state.table}.
--- Configured context is shown as a guide; uncomment only when your access is confirmed.
--- USE ROLE ${qid(state.roles.governance || "GOVERNANCE_ADMIN")};
--- USE WAREHOUSE ${qid(state.roles.warehouse || "GOV_WH")};
+${cocoReviewPrompt()}
 
--- 1. Session and table metadata
+## SQL EXECUTION PLAN
+
+Execute every statement below with SnowflakeSqlExecute. These statements are read-only. The exact count and sample-profile batches query the source table and can consume warehouse resources.
+
+Required access: USAGE on ${database}.${schema} and SELECT on ${state.table}. Suggested configured context: role ${qid(state.roles.governance || "GOVERNANCE_ADMIN")}, warehouse ${qid(state.roles.warehouse || "GOV_WH")}.
+
+\`\`\`sql
+-- Query 1: session context
 SELECT CURRENT_TIMESTAMP() AS REVIEWED_AT, CURRENT_ROLE() AS REVIEW_ROLE, CURRENT_WAREHOUSE() AS REVIEW_WAREHOUSE;
 
+-- Query 2: table metadata
 SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, ROW_COUNT AS METADATA_ROW_COUNT,
        BYTES, CREATED, LAST_ALTERED, COMMENT
 FROM ${qid(database)}.INFORMATION_SCHEMA.TABLES
 WHERE TABLE_SCHEMA = ${qstr(schema)} AND TABLE_NAME = ${qstr(tableName)};
 
--- 2. Live schema. CoCo must copy this result into evidence.observed_schema.
+-- Query 3: complete live schema
 SELECT ORDINAL_POSITION, COLUMN_NAME, DATA_TYPE, IS_NULLABLE,
        CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE,
        DATETIME_PRECISION, COLUMN_DEFAULT, COMMENT
@@ -357,17 +380,16 @@ FROM ${qid(database)}.INFORMATION_SCHEMA.COLUMNS
 WHERE TABLE_SCHEMA = ${qstr(schema)} AND TABLE_NAME = ${qstr(tableName)}
 ORDER BY ORDINAL_POSITION;
 
--- 3. Exact baseline. This may scan the table.
+-- Query 4: exact baseline
 SELECT COUNT(*) AS ROW_COUNT FROM ${state.table};
 
--- 4. Preliminary aggregate profiles. These never return raw values.
---    Each batch profiles at most ${COCO_PROFILE_BATCH_SIZE} columns over at most 10,000 rows.
+-- Remaining queries: aggregate-only profiles, at most ${COCO_PROFILE_BATCH_SIZE} columns per query over 10,000 rows.
 ${generateCocoProfileQueries(columns)}
+\`\`\`
 
-/*
-${cocoReviewPrompt()}
-*/
-`;
+## COMPLETION CHECK
+
+Before responding, verify that all ${4 + Math.ceil(columns.length / COCO_PROFILE_BATCH_SIZE)} planned queries succeeded, the observed-schema count equals the number of column recommendations, no raw values appear in the response, and the response is valid JSON.`;
 }
 
 function parseJsonResponse(text) {
@@ -408,24 +430,39 @@ function applyCocoReview(payload) {
   if (Number(payload.coco_review_version) !== COCO_REVIEW_VERSION) throw new Error(`Expected coco_review_version ${COCO_REVIEW_VERSION}`);
   const reviewTable = String(payload.table || "").trim().toUpperCase();
   if (reviewTable !== state.table) throw new Error(`This review is for ${reviewTable || "an unspecified table"}, not ${state.table}`);
+  const reviewStatus = String(payload.status || "").trim().toUpperCase();
+  if (reviewStatus !== "COMPLETE") throw new Error(`CoCo did not complete the autonomous review${reviewStatus ? ` (${reviewStatus})` : ""}`);
+  const execution = payload.execution && typeof payload.execution === "object" ? payload.execution : {};
+  if (String(execution.mode || "").trim().toUpperCase() !== "AGENT") throw new Error("CoCo did not certify Agent-mode execution");
+  if (String(execution.sql_tool || "").trim().toUpperCase() !== "SNOWFLAKESQLEXECUTE") throw new Error("CoCo did not identify SnowflakeSqlExecute as its SQL tool");
+  if (execution.sql_tool_used !== true) throw new Error("CoCo did not confirm SnowflakeSqlExecute execution");
+  const failedQueries = reviewStringArray(execution.failed_queries);
+  if (failedQueries.length) throw new Error(`CoCo reported ${failedQueries.length} failed quer${failedQueries.length === 1 ? "y" : "ies"}`);
+  const queriesPlanned = Number(execution.queries_planned);
+  const queriesSucceeded = Number(execution.queries_succeeded);
+  if (!Number.isInteger(queriesPlanned) || queriesPlanned < 1 || queriesSucceeded !== queriesPlanned) {
+    throw new Error("CoCo did not confirm that every planned query succeeded");
+  }
+  if (payload.evidence?.row_count === null || payload.evidence?.row_count === undefined || payload.evidence?.row_count === "") {
+    throw new Error("The executed exact row-count evidence is missing");
+  }
   const recommendations = payload.recommendations;
   if (!recommendations || typeof recommendations !== "object") throw new Error("The recommendations object is missing");
   if (!Array.isArray(recommendations.columns)) throw new Error("recommendations.columns must be an array");
 
   const warnings = [];
   const observedSchema = normalizeObservedSchema(payload.evidence?.observed_schema);
+  if (!observedSchema.length) throw new Error("The executed live-schema evidence is missing");
+  if (new Set(observedSchema.map(column => column.name)).size !== observedSchema.length) throw new Error("The executed live-schema evidence contains duplicate columns");
+  const minimumQueryCount = 4 + Math.ceil(observedSchema.length / COCO_PROFILE_BATCH_SIZE);
+  if (queriesPlanned < minimumQueryCount) throw new Error(`CoCo reported too few executed queries for ${observedSchema.length} live columns`);
   const catalogueNames = new Set(selectedTable.columns.map(column => column.name));
   const observedNames = new Set(observedSchema.map(column => column.name));
-  let schemaOverrides = { ...state.schema_overrides };
-  if (observedSchema.length) {
-    schemaOverrides = {
-      additional_columns: observedSchema.filter(column => !catalogueNames.has(column.name)),
-      excluded_catalog_columns: selectedTable.columns.filter(column => !observedNames.has(column.name)).map(column => column.name),
-      review_note: `CoCo review imported live schema evidence for ${observedSchema.length} columns; human verification is still required.`
-    };
-  } else {
-    warnings.push("No observed_schema evidence was supplied; catalogue overrides were not changed.");
-  }
+  const schemaOverrides = {
+    additional_columns: observedSchema.filter(column => !catalogueNames.has(column.name)),
+    excluded_catalog_columns: selectedTable.columns.filter(column => !observedNames.has(column.name)).map(column => column.name),
+    review_note: `CoCo autonomously executed live-schema evidence for ${observedSchema.length} columns; governance approval is still required.`
+  };
 
   const reviewColumns = recommendations.columns.map(column => ({
     ...column,
@@ -434,31 +471,22 @@ function applyCocoReview(payload) {
     nullable: String(column.nullable || column.is_nullable || "YES").trim().toUpperCase() === "NO" ? "NO" : "YES"
   })).filter(column => column.name);
 
-  const knownAfterEvidence = new Set([
-    ...selectedTable.columns.filter(column => !schemaOverrides.excluded_catalog_columns.includes(column.name)).map(column => column.name),
-    ...schemaOverrides.additional_columns.map(column => column.name)
-  ]);
-  reviewColumns.forEach((column, index) => {
-    if (!knownAfterEvidence.has(column.name)) {
-      schemaOverrides.additional_columns.push({
-        name: column.name, type: column.type, nullable: column.nullable,
-        ordinal_position: selectedTable.columns.length + schemaOverrides.additional_columns.length + index + 1
-      });
-      knownAfterEvidence.add(column.name);
-      warnings.push(`${column.name} was added from CoCo recommendations without observed_schema evidence.`);
-    }
-  });
+  const knownAfterEvidence = new Set(observedSchema.map(column => column.name));
 
   const duplicateReviewNames = reviewColumns.map(column => column.name).filter((name, index, all) => all.indexOf(name) !== index);
-  if (duplicateReviewNames.length) warnings.push(`Duplicate column recommendations were ignored for: ${[...new Set(duplicateReviewNames)].join(", ")}.`);
+  if (duplicateReviewNames.length) throw new Error(`Duplicate column recommendations: ${[...new Set(duplicateReviewNames)].join(", ")}`);
   const byName = new Map(reviewColumns.map(column => [column.name, column]));
+  const unknownAssessments = [...byName.keys()].filter(name => !knownAfterEvidence.has(name));
+  if (unknownAssessments.length) throw new Error(`Recommendations contain columns absent from executed schema evidence: ${unknownAssessments.join(", ")}`);
   const validColumns = [...knownAfterEvidence];
   const missingAssessments = validColumns.filter(name => !byName.has(name));
-  if (missingAssessments.length) warnings.push(`${missingAssessments.length} live/included columns have no CoCo recommendation and require manual completion.`);
+  if (missingAssessments.length) throw new Error(`${missingAssessments.length} live columns are missing CoCo assessments`);
 
   const invalidTiers = reviewColumns.filter(column => column.mask_tier && !MASK_TIERS.includes(String(column.mask_tier).toUpperCase()));
-  if (invalidTiers.length) warnings.push(`Unsupported masking tiers were ignored for: ${invalidTiers.map(column => column.name).join(", ")}.`);
+  if (invalidTiers.length) throw new Error(`Unsupported masking tiers for: ${invalidTiers.map(column => column.name).join(", ")}`);
   const privacyValues = new Set(["", "IDENTIFIER", "QUASI_IDENTIFIER", "SENSITIVE"]);
+  const invalidPrivacy = reviewColumns.filter(column => !privacyValues.has(String(column.privacy_category || "").trim().toUpperCase()));
+  if (invalidPrivacy.length) throw new Error(`Unsupported privacy categories for: ${invalidPrivacy.map(column => column.name).join(", ")}`);
   const eligible = [...byName.values()].filter(column => knownAfterEvidence.has(column.name));
   const classification = eligible.map(column => ({
     column: column.name,
@@ -543,9 +571,18 @@ function applyCocoReview(payload) {
     automation_review: {
       source: "SNOWFLAKE_COCO",
       review_version: COCO_REVIEW_VERSION,
+      status: reviewStatus,
       imported_at: new Date().toISOString(),
       generated_at: String(payload.generated_at || ""),
       assessed_columns: byName.size,
+      execution: {
+        mode: String(execution.mode || ""),
+        sql_tool: String(execution.sql_tool || ""),
+        sql_tool_used: true,
+        queries_planned: queriesPlanned,
+        queries_succeeded: queriesSucceeded,
+        failed_queries: []
+      },
       evidence: sanitizedEvidence,
       warnings
     }
@@ -580,10 +617,11 @@ function renderCocoReviewStatus() {
   const imported = new Date(review.imported_at);
   const importedLabel = Number.isNaN(imported.getTime()) ? "unknown time" : imported.toLocaleString();
   const rowCount = review.evidence?.row_count;
+  const queryCount = review.execution?.queries_succeeded;
   const warningCount = Array.isArray(review.warnings) ? review.warnings.length : 0;
   $("#cocoReviewStatusPill").textContent = "Recommendations imported";
   $("#cocoReviewStatusPill").classList.add("override");
-  $("#cocoReviewSummary").textContent = `Imported ${importedLabel} · ${review.assessed_columns || 0} columns assessed · row count ${rowCount ?? "not supplied"} · ${warningCount} warning${warningCount === 1 ? "" : "s"}. Human confirmations remain incomplete.`;
+  $("#cocoReviewSummary").textContent = `Imported ${importedLabel} · ${queryCount || 0} queries executed by CoCo · ${review.assessed_columns || 0} columns assessed · row count ${rowCount ?? "not supplied"} · ${warningCount} warning${warningCount === 1 ? "" : "s"}. Human confirmations remain incomplete.`;
   $("#cocoReviewWarnings").classList.toggle("hidden", warningCount === 0);
   $("#cocoReviewWarnings").innerHTML = (review.warnings || []).map(warning => `<li>${escapeHtml(warning)}</li>`).join("");
 }
@@ -1092,8 +1130,8 @@ function bindEvents() {
   $("#downloadCocoKitBtn").addEventListener("click", () => {
     if (!state) return;
     const safeName = state.table.replaceAll(".", "_");
-    downloadText(generateCocoReviewKit(), `${safeName}_coco_review_kit.sql`, "application/sql;charset=utf-8");
-    toast("CoCo review kit downloaded");
+    downloadText(generateCocoReviewKit(), `${safeName}_coco_autonomous_review.md`, "text/markdown;charset=utf-8");
+    toast("Autonomous CoCo task downloaded");
   });
   $("#importCocoReviewBtn").addEventListener("click", () => $("#importCocoReviewInput").click());
   $("#importCocoReviewInput").addEventListener("change", event => {

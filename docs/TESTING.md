@@ -52,8 +52,10 @@ The initial application commit was pushed to `main` and the remote commit was ve
 
 The regression test at `tests/coco-review.test.mjs` uses `DEV.RAW.DUTCHIE_LOYALTY_REGISTRATION` to verify that:
 
-- the kit contains the selected table, live-schema query, aggregate-only profiles and JSON contract;
+- the autonomous task contains the selected table, live-schema query, aggregate-only profiles and JSON contract;
+- the task tells CoCo to execute every query itself with `SnowflakeSqlExecute` and not ask a user to relay results;
 - it contains no classification call or `ALTER TABLE` statement;
+- an output that does not certify SQL-tool execution is rejected;
 - a valid response can add a live `INSERTED_AT` override and prefill review fields;
 - imported acceptance expressions outside the bounded aggregate form are rejected;
 - live-schema, masking and final approval remain `false` after import.

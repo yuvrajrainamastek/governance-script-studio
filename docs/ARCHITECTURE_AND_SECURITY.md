@@ -11,7 +11,7 @@ flowchart LR
     D[Human governance decisions] --> C
     E[Live Snowflake schema comparison] --> D
     C --> L[CoCo review-kit download]
-    L --> M[Manual Snowflake and CoCo session]
+    L --> M[CoCo Agent executes read-only SQL]
     M --> N[Structured review JSON]
     N --> C
     C --> F[Browser localStorage draft]
@@ -39,7 +39,7 @@ There is no application server, API, runtime database or Snowflake connector.
 1. The browser fetches `data/catalog.json` from the same origin.
 2. The selected table initializes a browser-local configuration.
 3. User decisions update in-memory state and `localStorage`.
-4. Optionally, the browser renders a CoCo review kit for manual Snowflake execution and imports the returned JSON as unapproved recommendations.
+4. Optionally, the browser renders an autonomous CoCo task; CoCo executes its read-only SQL plan and the browser imports the returned JSON as unapproved recommendations.
 5. Export serializes the reviewed state as JSON.
 6. Generation renders SQL strings in memory.
 7. Downloads use browser `Blob` URLs.
@@ -49,7 +49,7 @@ There is no application server, API, runtime database or Snowflake connector.
 
 After the static assets are loaded, the application makes no external requests. It does not transmit configurations, table names or decisions to GitHub, Netlify, OpenAI, Snowflake or any analytics service.
 
-The optional CoCo workflow is a manual file handoff controlled by the user. The browser does not initiate or observe the Snowflake/CoCo session.
+The optional CoCo workflow uses a file handoff controlled by the user. After receiving the task, CoCo performs the Snowflake evidence collection without a human relaying queries or results. The browser does not initiate or observe the CoCo session.
 
 Netlify naturally receives standard web-server request metadata when serving the static site. No analytics integration is included.
 

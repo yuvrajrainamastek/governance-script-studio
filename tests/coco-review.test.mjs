@@ -75,6 +75,9 @@ assert.match(kit, /DEV\.RAW\.DUTCHIE_LOYALTY_REGISTRATION/);
 assert.match(kit, /Aggregate-only profile batch 1 of 1/);
 assert.match(kit, /JSON CONTRACT/);
 assert.match(kit, /evidence\.observed_schema/);
+assert.match(kit, /SnowflakeSqlExecute/);
+assert.match(kit, /Do not ask the user to run SQL/);
+assert.match(kit, /Execute every read-only query in the SQL EXECUTION PLAN/i);
 assert.doesNotMatch(kit, /CALL SYSTEM\$CLASSIFY/);
 assert.doesNotMatch(kit, /ALTER TABLE/);
 
@@ -123,6 +126,14 @@ review.recommendations.deidentification = {
   ]
 };
 
+context.incompleteReview = JSON.parse(JSON.stringify(review));
+context.incompleteReview.execution.sql_tool_used = false;
+const incompleteMessage = vm.runInContext(`(() => {
+  try { applyCocoReview(incompleteReview); return "accepted"; }
+  catch (error) { return error.message; }
+})()`, context);
+assert.match(incompleteMessage, /did not confirm SnowflakeSqlExecute execution/);
+
 context.testReview = review;
 vm.runInContext("applyCocoReview(testReview)", context);
 const imported = JSON.parse(vm.runInContext("JSON.stringify(state)", context));
@@ -142,4 +153,4 @@ assert.equal(imported.deidentification.checks.length, 1);
 assert.equal(imported.deidentification.checks[0].alias, "email_present");
 assert.ok(imported.automation_review.warnings.some(warning => warning.includes("safe aggregate expressions")));
 
-console.log("PASS: CoCo review kit generation and guarded import workflow");
+console.log("PASS: autonomous CoCo task generation and execution-certified import workflow");

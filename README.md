@@ -2,7 +2,7 @@
 
 Governance Script Studio is a dependency-free static web application that converts a human-reviewed governance configuration into the standard eight Snowflake SQL files used for `DEV.RAW` table onboarding.
 
-The application contains an embedded physical catalogue of **258 `DEV.RAW` tables and 5,689 columns** sourced from `Book 6.xlsx`. It runs entirely in the browser and does not connect to Snowflake, call an AI service, execute SQL, or include the modernization/dbt repository. An optional handoff lets a user download a review kit, run it manually with Snowflake CoCo, and import CoCo's structured recommendations.
+The application contains an embedded physical catalogue of **258 `DEV.RAW` tables and 5,689 columns** sourced from `Book 6.xlsx`. It runs entirely in the browser and does not connect to Snowflake, call an AI service, execute SQL, or include the modernization/dbt repository. An optional handoff generates a self-contained task that Snowflake CoCo executes autonomously before returning structured recommendations for human review.
 
 ## Core principles
 
@@ -34,7 +34,7 @@ Run a local static server from the repository root:
 python -m http.server 8080
 ```
 
-Open `http://localhost:8080`, select a table and follow the seven application steps. After table selection, optionally download the CoCo review kit and import its JSON response before beginning human review. Do not open `index.html` directly with `file://`; the browser must fetch `data/catalog.json` over HTTP.
+Open `http://localhost:8080`, select a table and follow the seven application steps. After table selection, optionally download the autonomous CoCo task, give it to CoCo Agent mode and import its completed JSON before beginning human review. Do not open `index.html` directly with `file://`; the browser must fetch `data/catalog.json` over HTTP.
 
 ## Generated files
 
