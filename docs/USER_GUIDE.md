@@ -43,6 +43,22 @@ ORDER BY ORDINAL_POSITION;
 
 The application deliberately resets live-schema confirmation when an included column changes.
 
+### Optional: prefill with Snowflake CoCo
+
+After selecting a table, the **Snowflake CoCo review handoff** appears on the Catalogue screen.
+
+1. Select **Download CoCo review kit**.
+2. Open the generated SQL file in an authorized Snowflake worksheet.
+3. Review the warehouse-cost warning and run the required metadata, count and aggregate-profile sections.
+4. Give CoCo the result sets and the prompt embedded at the end of the file.
+5. Paste CoCo's JSON-only response directly into the handoff card, or save it as a `.json`/`.txt` file and select **Import CoCo review JSON**.
+6. Apply the pasted recommendations or select the saved response file.
+7. Read every import warning, compare the imported live schema and then begin the normal human review.
+
+The import can prefill schema overrides, classification, masking, tags, quality candidates, descriptions, row-access rationale and de-identification notes. It does not import roles or approvals. `live_schema_confirmed`, `masking_review_confirmed` and `human_approved` are always reset to `false`.
+
+See [Snowflake CoCo review workflow](COCO_REVIEW_WORKFLOW.md) for the full contract and safety boundary.
+
 ## Step 2: Classification and masking
 
 Review every included column. The application can display deterministic prompts for common names, but it does not select them unless the reviewer explicitly clicks **Apply visible suggestions**.

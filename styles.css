@@ -117,6 +117,22 @@ summary { cursor: pointer; font-weight: 750; color: var(--ink); }
 .metric-row strong { font-size: 19px; }
 .metric-row span { color: var(--muted); font-size: 10px; margin-top: 3px; }
 
+.coco-review-card { border-color: #b9ddd5; background: linear-gradient(135deg, #fff, #f4fcf9); }
+.coco-intro { max-width: 900px; margin: -4px 0 18px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.handoff-flow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+.handoff-flow div { position: relative; min-height: 104px; padding: 15px 14px 13px 48px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.78); }
+.handoff-flow div > span { position: absolute; top: 14px; left: 14px; width: 25px; height: 25px; display: grid; place-items: center; border-radius: 8px; color: var(--teal-dark); background: var(--mint-soft); font-size: 11px; font-weight: 900; }
+.handoff-flow strong, .handoff-flow small { display: block; }
+.handoff-flow strong { font-size: 12px; margin-bottom: 6px; }
+.handoff-flow small { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.coco-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-bottom: 13px; }
+.coco-paste { margin: 0 0 13px; }
+.coco-paste textarea { margin: 12px 0 9px; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 11px; }
+.review-import-summary { padding: 11px 13px; border-radius: 10px; color: #4d666a; background: #edf4f2; font-size: 11px; line-height: 1.5; }
+.review-import-warnings { margin: 10px 0 0; padding: 11px 15px 11px 30px; border: 1px solid #ecd297; border-radius: 10px; color: #775112; background: var(--amber-soft); font-size: 11px; line-height: 1.5; }
+.coco-review-card details { margin-top: 15px; }
+.coco-review-card details p { color: var(--muted); font-size: 11px; line-height: 1.55; }
+
 .schema-toolbar, .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin-bottom: 14px; }
 .schema-toolbar input, .toolbar input { max-width: 340px; }
 .schema-toolbar span { color: var(--muted); font-size: 12px; }
@@ -188,6 +204,8 @@ td code { color: #1d4d52; font-size: 11px; font-weight: 700; }
   .workspace { padding-left: 25px; padding-right: 25px; }
   .grid.two, .grid.two-one { grid-template-columns: 1fr; }
   .file-grid { grid-template-columns: 1fr; }
+  .handoff-flow { grid-template-columns: 1fr; }
+  .handoff-flow div { min-height: 0; }
 }
 
 @media (max-width: 760px) {

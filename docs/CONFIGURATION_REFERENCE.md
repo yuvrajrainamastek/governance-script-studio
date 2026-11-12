@@ -28,6 +28,7 @@ Top-level structure:
   "classification_note": "",
   "row_access": {},
   "deidentification": {},
+  "automation_review": null,
   "schema_overrides": {}
 }
 ```
@@ -42,6 +43,22 @@ Top-level structure:
 | `human_approved` | Final browser-session approval. Reset to `false` on import. |
 | `live_schema_confirmed` | Confirmation that the catalogue was compared with Snowflake. Reset on import/schema change. |
 | `masking_review_confirmed` | Confirmation that every included column was reviewed. Reset on import/masking change. |
+
+`automation_review` is populated after a Snowflake CoCo review import. It records provenance, aggregate evidence, assessed-column count and import warnings. It is audit context, not approval evidence:
+
+```json
+"automation_review": {
+  "source": "SNOWFLAKE_COCO",
+  "review_version": 1,
+  "imported_at": "2026-11-12T12:30:00.000Z",
+  "generated_at": "2026-11-12T12:25:00Z",
+  "assessed_columns": 14,
+  "evidence": { "row_count": 42, "observed_schema": [] },
+  "warnings": []
+}
+```
+
+The CoCo response is a separate input contract described in [Snowflake CoCo review workflow](COCO_REVIEW_WORKFLOW.md). It is translated into this configuration only after table/version validation and safety filtering.
 
 ## Roles
 

@@ -2,7 +2,7 @@
 
 Governance Script Studio is a dependency-free static web application that converts a human-reviewed governance configuration into the standard eight Snowflake SQL files used for `DEV.RAW` table onboarding.
 
-The application contains an embedded physical catalogue of **258 `DEV.RAW` tables and 5,689 columns** sourced from `Book 6.xlsx`. It runs entirely in the browser and does not connect to Snowflake, call an AI service, execute SQL, or include the modernization/dbt repository.
+The application contains an embedded physical catalogue of **258 `DEV.RAW` tables and 5,689 columns** sourced from `Book 6.xlsx`. It runs entirely in the browser and does not connect to Snowflake, call an AI service, execute SQL, or include the modernization/dbt repository. An optional handoff lets a user download a review kit, run it manually with Snowflake CoCo, and import CoCo's structured recommendations.
 
 ## Core principles
 
@@ -15,6 +15,7 @@ The application contains an embedded physical catalogue of **258 `DEV.RAW` table
 ## What the application supports
 
 - Search and selection across all embedded `DEV.RAW` tables.
+- Optional Snowflake CoCo review-kit generation and guarded recommendation import.
 - Live-schema additions and catalogue-column exclusions.
 - Snowflake semantic and privacy classification assignments.
 - Tag-based masking tiers: `FULL`, `PARTIAL_EMAIL`, `PARTIAL_PHONE`, `PARTIAL_ZIP` and `CONDITIONAL`.
@@ -33,7 +34,7 @@ Run a local static server from the repository root:
 python -m http.server 8080
 ```
 
-Open `http://localhost:8080`, select a table and follow the seven application steps. Do not open `index.html` directly with `file://`; the browser must fetch `data/catalog.json` over HTTP.
+Open `http://localhost:8080`, select a table and follow the seven application steps. After table selection, optionally download the CoCo review kit and import its JSON response before beginning human review. Do not open `index.html` directly with `file://`; the browser must fetch `data/catalog.json` over HTTP.
 
 ## Generated files
 
@@ -55,6 +56,7 @@ See [Generated SQL reference](docs/GENERATED_SQL.md) for the responsibility and 
 ## Documentation
 
 - [User guide](docs/USER_GUIDE.md) — complete browser workflow and reviewer checklist.
+- [Snowflake CoCo review workflow](docs/COCO_REVIEW_WORKFLOW.md) — review-kit queries, JSON handoff and approval boundary.
 - [Configuration reference](docs/CONFIGURATION_REFERENCE.md) — exported JSON fields and examples.
 - [Catalogue maintenance](docs/CATALOGUE.md) — snapshot limitations, live-schema comparison and catalogue format.
 - [Generated SQL reference](docs/GENERATED_SQL.md) — the eight scripts, roles, prerequisites and rollback boundaries.
@@ -72,6 +74,8 @@ See [Generated SQL reference](docs/GENERATED_SQL.md) for the responsibility and 
 ├── app.js                     # State, validation, SQL generation and ZIP creation
 ├── data/
 │   └── catalog.json           # Embedded DEV.RAW schema catalogue
+├── tests/
+│   └── coco-review.test.mjs   # Review-kit and guarded-import regression test
 ├── docs/                      # Operational and technical documentation
 ├── favicon.svg
 ├── netlify.toml               # Buildless Netlify configuration and security headers
@@ -86,6 +90,7 @@ See [Generated SQL reference](docs/GENERATED_SQL.md) for the responsibility and 
 3. The application validates configuration structure and generated-file completeness; it does not compile SQL against Snowflake.
 4. Existing shared tags, masking policies, roles, warehouses and DMFs must exist and be authorized in the target Snowflake account.
 5. Some generated commands are privileged. Every file requires code review and execution by authorized roles.
+6. CoCo output is preliminary evidence and recommendations only. It can be incomplete or incorrect and never satisfies the application's review confirmations or final approval.
 
 ## Netlify
 

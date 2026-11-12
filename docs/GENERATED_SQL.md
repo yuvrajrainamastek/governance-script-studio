@@ -1,5 +1,7 @@
 # Generated SQL reference
 
+The optional `<TABLE>_coco_review_kit.sql` is a preliminary evidence-gathering worksheet, not one of the eight governance execution files. It contains no governance DDL and is documented separately in [Snowflake CoCo review workflow](COCO_REVIEW_WORKFLOW.md).
+
 ## Execution order
 
 The application generates eight files. Their numeric prefixes define the default review and execution order, except file 7 records Task 4 after the preceding metadata work to match the established repository format.

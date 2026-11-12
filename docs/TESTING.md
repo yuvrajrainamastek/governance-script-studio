@@ -48,6 +48,22 @@ All 16 validation checks passed, eight SQL files were generated, and the ZIP con
 
 The initial application commit was pushed to `main` and the remote commit was verified.
 
+### Snowflake CoCo handoff
+
+The regression test at `tests/coco-review.test.mjs` uses `DEV.RAW.DUTCHIE_LOYALTY_REGISTRATION` to verify that:
+
+- the kit contains the selected table, live-schema query, aggregate-only profiles and JSON contract;
+- it contains no classification call or `ALTER TABLE` statement;
+- a valid response can add a live `INSERTED_AT` override and prefill review fields;
+- imported acceptance expressions outside the bounded aggregate form are rejected;
+- live-schema, masking and final approval remain `false` after import.
+
+Run it with:
+
+```powershell
+node tests/coco-review.test.mjs
+```
+
 ## Release checklist
 
 Run this checklist after changing application logic, validation, templates or the catalogue.
@@ -56,6 +72,7 @@ Run this checklist after changing application logic, validation, templates or th
 
 ```powershell
 node --check app.js
+node tests/coco-review.test.mjs
 ```
 
 ### 2. Catalogue integrity

@@ -41,7 +41,7 @@
           <span class="status-dot"></span>
           Runs entirely in your browser
         </div>
-        <span>No AI · No SQL execution</span>
+        <span>No embedded AI · No SQL execution</span>
       </div>
     </aside>
 
@@ -90,6 +90,38 @@
             <button class="button secondary full" id="copySchemaQueryBtn" disabled>Copy live-schema query</button>
           </article>
         </div>
+
+        <article class="card hidden coco-review-card" id="cocoReviewCard">
+          <div class="card-header">
+            <div>
+              <span class="eyebrow">Optional review accelerator</span>
+              <h3>Snowflake CoCo review handoff</h3>
+            </div>
+            <span class="source-pill" id="cocoReviewStatusPill">Not imported</span>
+          </div>
+          <p class="coco-intro">Generate a table-specific, aggregate-only SQL guide for Snowflake. CoCo uses its result sets and the embedded response contract to return structured JSON that can prefill this review.</p>
+          <div class="handoff-flow" aria-label="CoCo review workflow">
+            <div><span>1</span><strong>Download guide</strong><small>Table metadata, safe profiling queries and response contract</small></div>
+            <div><span>2</span><strong>Run with CoCo</strong><small>Execute in Snowflake and ask CoCo for JSON only</small></div>
+            <div><span>3</span><strong>Import result</strong><small>Prefill recommendations, then complete human review</small></div>
+          </div>
+          <div class="coco-actions">
+            <button class="button secondary" id="downloadCocoKitBtn">Download CoCo review kit</button>
+            <button class="button ghost" id="importCocoReviewBtn">Import CoCo review JSON</button>
+            <input id="importCocoReviewInput" type="file" accept="application/json,.json,.txt" hidden>
+          </div>
+          <details class="coco-paste">
+            <summary>Paste CoCo JSON instead</summary>
+            <textarea id="cocoReviewPaste" rows="8" spellcheck="false" placeholder="Paste the JSON object returned by CoCo"></textarea>
+            <button class="button secondary" id="applyCocoReviewPasteBtn" type="button">Apply pasted recommendations</button>
+          </details>
+          <div id="cocoReviewSummary" class="review-import-summary">No CoCo review has been imported for this table.</div>
+          <ul id="cocoReviewWarnings" class="review-import-warnings hidden"></ul>
+          <details>
+            <summary>Automation boundary</summary>
+            <p>The import contains evidence and recommendations, not approvals. Live-schema, masking and final governance confirmations are always reset and must be completed by a governance engineer.</p>
+          </details>
+        </article>
 
         <article class="card hidden" id="schemaReviewCard">
           <div class="card-header">

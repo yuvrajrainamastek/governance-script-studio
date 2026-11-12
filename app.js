@@ -5,6 +5,8 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const STORAGE_PREFIX = "governance-script-studio:v1:";
 const MASK_TIERS = ["", "FULL", "PARTIAL_EMAIL", "PARTIAL_PHONE", "PARTIAL_ZIP", "CONDITIONAL"];
 const RESERVED = new Set(["COMMENT", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP"]);
+const COCO_REVIEW_VERSION = 1;
+const COCO_PROFILE_BATCH_SIZE = 24;
 
 let catalogue = { tables: [] };
 let selectedTable = null;
@@ -89,6 +91,7 @@ function defaultState(table) {
     classification_note: "Review classification results before applying any system tags.",
     row_access: { apply: false, reason: "", policy_name: "", columns: [] },
     deidentification: { decision: "", checks: [] },
+    automation_review: null,
     schema_overrides: {
       additional_columns: [], excluded_catalog_columns: [],
       review_note: "Compare the catalogue with current DEV.INFORMATION_SCHEMA.COLUMNS."
@@ -121,6 +124,9 @@ function normalizeState(imported, table) {
     comments: { ...base.comments, ...(imported.comments || {}), columns: { ...(imported.comments?.columns || {}) } },
     row_access: { ...base.row_access, ...(imported.row_access || {}) },
     deidentification: { ...base.deidentification, ...(imported.deidentification || {}) },
+    automation_review: imported.automation_review && typeof imported.automation_review === "object"
+      ? { ...imported.automation_review }
+      : null,
     schema_overrides: { ...base.schema_overrides, ...(imported.schema_overrides || {}) }
   };
   merged.masking = (merged.masking || []).map(item => ({ ...item, column: String(item.column).toUpperCase(), tier: String(item.tier).toUpperCase() }));
@@ -223,6 +229,365 @@ function downloadText(text, fileName, type = "text/plain;charset=utf-8") {
   downloadBlob(new Blob([text], { type }), fileName);
 }
 
+function cocoReviewContract() {
+  return {
+    coco_review_version: COCO_REVIEW_VERSION,
+    table: state.table,
+    generated_at: "<ISO-8601 timestamp>",
+    evidence: {
+      row_count: null,
+      profile_row_limit: 10000,
+      observed_schema: [],
+      notes: []
+    },
+    recommendations: {
+      table_description: "",
+      business_terms: [],
+      object_tags: {
+        SOURCE_SYSTEM: state.object_tags.SOURCE_SYSTEM || "",
+        LAYER: state.object_tags.LAYER || "RAW",
+        RETENTION: state.object_tags.RETENTION || "NON_RECORD"
+      },
+      columns: [{
+        name: "<LIVE COLUMN NAME>",
+        type: "<DATA_TYPE>",
+        nullable: "YES",
+        semantic_category: "",
+        privacy_category: "",
+        mask_tier: "",
+        masking_reason: "",
+        cde: false,
+        pii_derived: false,
+        null_check: false,
+        comment: "",
+        rationale: "",
+        confidence: "LOW"
+      }],
+      quality: {
+        duplicate_key: [],
+        freshness_column: "",
+        baseline_note: "",
+        expected_notes: ""
+      },
+      row_access: {
+        apply: false,
+        reason: "",
+        policy_name: "",
+        columns: []
+      },
+      deidentification: {
+        decision: "",
+        checks: []
+      },
+      review_notes: []
+    }
+  };
+}
+
+function cocoReviewPrompt() {
+  const contract = JSON.stringify(cocoReviewContract(), null, 2).replaceAll("*/", "* /");
+  return `SNOWFLAKE COCO REVIEW TASK
+
+Review only ${state.table}. Use the metadata, exact row count and aggregate-only sample profiles returned by this worksheet. Do not expose, quote or return raw source values. Treat name-based inferences as recommendations, not facts.
+
+Return exactly one valid JSON object matching the contract below. Do not wrap it in Markdown. Populate evidence.observed_schema from DEV.INFORMATION_SCHEMA.COLUMNS. Include one recommendations.columns entry for every live column. Use only these masking tiers: FULL, PARTIAL_EMAIL, PARTIAL_PHONE, PARTIAL_ZIP, CONDITIONAL, or an empty string. Use only these privacy categories: IDENTIFIER, QUASI_IDENTIFIER, SENSITIVE, or an empty string.
+
+Recommend values only when supported by metadata or aggregate evidence. Put uncertainty in rationale, confidence and recommendations.review_notes. Never invent a row-access policy name, business definition, retention decision, de-identification treatment or approval. Leave unsupported values empty and explain what a human must verify.
+
+JSON CONTRACT
+${contract}`;
+}
+
+function generateCocoProfileQueries(columns) {
+  const batches = [];
+  for (let start = 0; start < columns.length; start += COCO_PROFILE_BATCH_SIZE) {
+    const batch = columns.slice(start, start + COCO_PROFILE_BATCH_SIZE);
+    const objects = batch.map(column => {
+      const identifier = qid(column.name);
+      return `OBJECT_CONSTRUCT_KEEP_NULL(
+      'column_name', ${qstr(column.name)},
+      'sample_rows', COUNT(*),
+      'null_count', COUNT_IF(${identifier} IS NULL),
+      'approx_distinct', APPROX_COUNT_DISTINCT(TO_VARCHAR(${identifier})),
+      'min_length', MIN(IFF(${identifier} IS NULL, NULL, LENGTH(TO_VARCHAR(${identifier})))),
+      'max_length', MAX(IFF(${identifier} IS NULL, NULL, LENGTH(TO_VARCHAR(${identifier}))))
+    )`;
+    });
+    batches.push(`-- Aggregate-only profile batch ${batches.length + 1} of ${Math.ceil(columns.length / COCO_PROFILE_BATCH_SIZE)}
+WITH REVIEW_SAMPLE AS (
+  SELECT * FROM ${state.table} LIMIT 10000
+)
+SELECT ARRAY_CONSTRUCT(
+  ${objects.join(",\n  ")}
+) AS COLUMN_PROFILE
+FROM REVIEW_SAMPLE;`);
+  }
+  return batches.join("\n\n");
+}
+
+function generateCocoReviewKit() {
+  const [database, schema, tableName] = state.table.split(".");
+  const columns = currentColumns();
+  return `/*
+** Governance Script Studio - Snowflake CoCo review kit
+** Table: ${state.table}
+** Purpose: gather metadata and aggregate evidence for a preliminary governance review.
+** Boundary: this worksheet does not apply tags, policies, comments, grants or table changes.
+** Cost note: the exact count and sample-profile batches query the source table. Review warehouse cost before running.
+*/
+
+-- Use a role and warehouse with USAGE on ${database}.${schema} and SELECT on ${state.table}.
+-- Configured context is shown as a guide; uncomment only when your access is confirmed.
+-- USE ROLE ${qid(state.roles.governance || "GOVERNANCE_ADMIN")};
+-- USE WAREHOUSE ${qid(state.roles.warehouse || "GOV_WH")};
+
+-- 1. Session and table metadata
+SELECT CURRENT_TIMESTAMP() AS REVIEWED_AT, CURRENT_ROLE() AS REVIEW_ROLE, CURRENT_WAREHOUSE() AS REVIEW_WAREHOUSE;
+
+SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, ROW_COUNT AS METADATA_ROW_COUNT,
+       BYTES, CREATED, LAST_ALTERED, COMMENT
+FROM ${qid(database)}.INFORMATION_SCHEMA.TABLES
+WHERE TABLE_SCHEMA = ${qstr(schema)} AND TABLE_NAME = ${qstr(tableName)};
+
+-- 2. Live schema. CoCo must copy this result into evidence.observed_schema.
+SELECT ORDINAL_POSITION, COLUMN_NAME, DATA_TYPE, IS_NULLABLE,
+       CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE,
+       DATETIME_PRECISION, COLUMN_DEFAULT, COMMENT
+FROM ${qid(database)}.INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = ${qstr(schema)} AND TABLE_NAME = ${qstr(tableName)}
+ORDER BY ORDINAL_POSITION;
+
+-- 3. Exact baseline. This may scan the table.
+SELECT COUNT(*) AS ROW_COUNT FROM ${state.table};
+
+-- 4. Preliminary aggregate profiles. These never return raw values.
+--    Each batch profiles at most ${COCO_PROFILE_BATCH_SIZE} columns over at most 10,000 rows.
+${generateCocoProfileQueries(columns)}
+
+/*
+${cocoReviewPrompt()}
+*/
+`;
+}
+
+function parseJsonResponse(text) {
+  const source = String(text || "").trim();
+  if (!source) throw new Error("The selected file is empty");
+  try { return JSON.parse(source); } catch { /* try common CoCo wrappers below */ }
+  const fenced = source.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) return JSON.parse(fenced[1].trim());
+  const firstBrace = source.indexOf("{");
+  const lastBrace = source.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) return JSON.parse(source.slice(firstBrace, lastBrace + 1));
+  throw new Error("No valid JSON object was found");
+}
+
+function reviewStringArray(value) {
+  return Array.isArray(value) ? [...new Set(value.map(item => String(item || "").trim()).filter(Boolean))] : [];
+}
+
+function normalizeObservedSchema(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((column, index) => ({
+    name: String(column.column_name || column.COLUMN_NAME || column.name || "").trim().toUpperCase(),
+    type: String(column.data_type || column.DATA_TYPE || column.type || "TEXT").trim().toUpperCase(),
+    nullable: String(column.is_nullable || column.IS_NULLABLE || column.nullable || "YES").trim().toUpperCase() === "NO" ? "NO" : "YES",
+    ordinal_position: Number(column.ordinal_position || column.ORDINAL_POSITION || index + 1)
+  })).filter(column => column.name && column.name.length <= 255);
+}
+
+function isSafeImportedAggregate(expression) {
+  const value = String(expression || "").trim();
+  if (!/^(COUNT|COUNT_IF|SUM|MIN|MAX|AVG|APPROX_COUNT_DISTINCT)\s*\([\s\S]*\)$/i.test(value)) return false;
+  if (/;|--|\/\*|\*\//.test(value)) return false;
+  return !/\b(SELECT|FROM|UNION|INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|CREATE|CALL|EXECUTE|GRANT|REVOKE)\b/i.test(value);
+}
+
+function applyCocoReview(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("CoCo output must be a JSON object");
+  if (Number(payload.coco_review_version) !== COCO_REVIEW_VERSION) throw new Error(`Expected coco_review_version ${COCO_REVIEW_VERSION}`);
+  const reviewTable = String(payload.table || "").trim().toUpperCase();
+  if (reviewTable !== state.table) throw new Error(`This review is for ${reviewTable || "an unspecified table"}, not ${state.table}`);
+  const recommendations = payload.recommendations;
+  if (!recommendations || typeof recommendations !== "object") throw new Error("The recommendations object is missing");
+  if (!Array.isArray(recommendations.columns)) throw new Error("recommendations.columns must be an array");
+
+  const warnings = [];
+  const observedSchema = normalizeObservedSchema(payload.evidence?.observed_schema);
+  const catalogueNames = new Set(selectedTable.columns.map(column => column.name));
+  const observedNames = new Set(observedSchema.map(column => column.name));
+  let schemaOverrides = { ...state.schema_overrides };
+  if (observedSchema.length) {
+    schemaOverrides = {
+      additional_columns: observedSchema.filter(column => !catalogueNames.has(column.name)),
+      excluded_catalog_columns: selectedTable.columns.filter(column => !observedNames.has(column.name)).map(column => column.name),
+      review_note: `CoCo review imported live schema evidence for ${observedSchema.length} columns; human verification is still required.`
+    };
+  } else {
+    warnings.push("No observed_schema evidence was supplied; catalogue overrides were not changed.");
+  }
+
+  const reviewColumns = recommendations.columns.map(column => ({
+    ...column,
+    name: String(column.name || column.column_name || "").trim().toUpperCase(),
+    type: String(column.type || column.data_type || "TEXT").trim().toUpperCase(),
+    nullable: String(column.nullable || column.is_nullable || "YES").trim().toUpperCase() === "NO" ? "NO" : "YES"
+  })).filter(column => column.name);
+
+  const knownAfterEvidence = new Set([
+    ...selectedTable.columns.filter(column => !schemaOverrides.excluded_catalog_columns.includes(column.name)).map(column => column.name),
+    ...schemaOverrides.additional_columns.map(column => column.name)
+  ]);
+  reviewColumns.forEach((column, index) => {
+    if (!knownAfterEvidence.has(column.name)) {
+      schemaOverrides.additional_columns.push({
+        name: column.name, type: column.type, nullable: column.nullable,
+        ordinal_position: selectedTable.columns.length + schemaOverrides.additional_columns.length + index + 1
+      });
+      knownAfterEvidence.add(column.name);
+      warnings.push(`${column.name} was added from CoCo recommendations without observed_schema evidence.`);
+    }
+  });
+
+  const duplicateReviewNames = reviewColumns.map(column => column.name).filter((name, index, all) => all.indexOf(name) !== index);
+  if (duplicateReviewNames.length) warnings.push(`Duplicate column recommendations were ignored for: ${[...new Set(duplicateReviewNames)].join(", ")}.`);
+  const byName = new Map(reviewColumns.map(column => [column.name, column]));
+  const validColumns = [...knownAfterEvidence];
+  const missingAssessments = validColumns.filter(name => !byName.has(name));
+  if (missingAssessments.length) warnings.push(`${missingAssessments.length} live/included columns have no CoCo recommendation and require manual completion.`);
+
+  const invalidTiers = reviewColumns.filter(column => column.mask_tier && !MASK_TIERS.includes(String(column.mask_tier).toUpperCase()));
+  if (invalidTiers.length) warnings.push(`Unsupported masking tiers were ignored for: ${invalidTiers.map(column => column.name).join(", ")}.`);
+  const privacyValues = new Set(["", "IDENTIFIER", "QUASI_IDENTIFIER", "SENSITIVE"]);
+  const eligible = [...byName.values()].filter(column => knownAfterEvidence.has(column.name));
+  const classification = eligible.map(column => ({
+    column: column.name,
+    semantic_category: String(column.semantic_category || "").trim().toUpperCase(),
+    privacy_category: String(column.privacy_category || "").trim().toUpperCase()
+  })).filter(item => item.semantic_category || item.privacy_category).map(item => ({
+    ...item,
+    privacy_category: privacyValues.has(item.privacy_category) ? item.privacy_category : ""
+  }));
+  const masking = eligible.filter(column => MASK_TIERS.includes(String(column.mask_tier || "").toUpperCase()) && column.mask_tier).map(column => ({
+    column: column.name,
+    tier: String(column.mask_tier).toUpperCase(),
+    reason: String(column.masking_reason || column.rationale || "").trim()
+  }));
+  const columnComments = Object.fromEntries(eligible.filter(column => String(column.comment || "").trim()).map(column => [column.name, String(column.comment).trim()]));
+  const qualityInput = recommendations.quality && typeof recommendations.quality === "object" ? recommendations.quality : {};
+  const rowAccessInput = recommendations.row_access && typeof recommendations.row_access === "object" ? recommendations.row_access : {};
+  const deidInput = recommendations.deidentification && typeof recommendations.deidentification === "object" ? recommendations.deidentification : {};
+  const objectTags = recommendations.object_tags && typeof recommendations.object_tags === "object" ? recommendations.object_tags : {};
+  const requestedChecks = Array.isArray(deidInput.checks) ? deidInput.checks.map(check => ({
+    alias: String(check.alias || "").trim(),
+    expression: String(check.expression || "").trim(),
+    expected: String(check.expected ?? "").trim()
+  })).filter(check => check.alias || check.expression || check.expected) : [];
+  const unsafeChecks = requestedChecks.filter(check => !isSafeImportedAggregate(check.expression));
+  if (unsafeChecks.length) warnings.push(`${unsafeChecks.length} de-identification check expression(s) were not recognized as safe aggregate expressions and were not imported.`);
+  const safeChecks = requestedChecks.filter(check => !unsafeChecks.includes(check));
+  const normalizedObjectTags = Object.fromEntries(Object.entries(objectTags).map(([key, value]) => [String(key).toUpperCase(), value]));
+  const approvedObjectTags = Object.fromEntries(["SOURCE_SYSTEM", "LAYER", "RETENTION"]
+    .filter(key => Object.hasOwn(normalizedObjectTags, key))
+    .map(key => [key, String(normalizedObjectTags[key] || "").toUpperCase()]));
+  const sanitizedEvidence = {
+    row_count: payload.evidence?.row_count ?? null,
+    profile_row_limit: Number(payload.evidence?.profile_row_limit) || null,
+    observed_schema: observedSchema.map(column => ({
+      ordinal_position: column.ordinal_position,
+      column_name: column.name,
+      data_type: column.type,
+      is_nullable: column.nullable
+    })),
+    notes: reviewStringArray(payload.evidence?.notes)
+  };
+
+  const next = normalizeState({
+    ...state,
+    object_tags: {
+      ...state.object_tags,
+      ...approvedObjectTags
+    },
+    baseline: {
+      ...state.baseline,
+      expected_rows_note: String(qualityInput.baseline_note || state.baseline.expected_rows_note || "").trim()
+    },
+    classification,
+    masking,
+    cde_columns: eligible.filter(column => column.cde === true).map(column => column.name),
+    pii_derived_columns: eligible.filter(column => column.pii_derived === true).map(column => column.name),
+    quality: {
+      ...state.quality,
+      duplicate_key: reviewStringArray(qualityInput.duplicate_key).map(value => value.toUpperCase()).filter(value => knownAfterEvidence.has(value)),
+      null_count_columns: eligible.filter(column => column.null_check === true).map(column => column.name),
+      freshness_column: String(qualityInput.freshness_column || "").trim().toUpperCase(),
+      expected_notes: String(qualityInput.expected_notes || "").trim()
+    },
+    comments: {
+      table: String(recommendations.table_description || "").trim(),
+      columns: columnComments
+    },
+    business_terms: reviewStringArray(recommendations.business_terms),
+    classification_note: `Imported Snowflake CoCo recommendations require human review. ${reviewStringArray(recommendations.review_notes).join(" ")}`.trim(),
+    row_access: {
+      apply: rowAccessInput.apply === true,
+      reason: String(rowAccessInput.reason || "").trim(),
+      policy_name: String(rowAccessInput.policy_name || "").trim().toUpperCase(),
+      columns: reviewStringArray(rowAccessInput.columns).map(value => value.toUpperCase()).filter(value => knownAfterEvidence.has(value))
+    },
+    deidentification: {
+      decision: String(deidInput.decision || "").trim(),
+      checks: safeChecks
+    },
+    schema_overrides: schemaOverrides,
+    automation_review: {
+      source: "SNOWFLAKE_COCO",
+      review_version: COCO_REVIEW_VERSION,
+      imported_at: new Date().toISOString(),
+      generated_at: String(payload.generated_at || ""),
+      assessed_columns: byName.size,
+      evidence: sanitizedEvidence,
+      warnings
+    }
+  }, selectedTable);
+
+  state = next;
+  generatedScripts = {};
+  saveState("CoCo recommendations imported; human review required");
+  switchStep("catalogue");
+  toast(`CoCo review imported with ${warnings.length} warning${warnings.length === 1 ? "" : "s"}`);
+}
+
+function importCocoReview(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try { applyCocoReview(parseJsonResponse(reader.result)); }
+    catch (error) { toast(`CoCo import failed: ${error.message}`); }
+  };
+  reader.readAsText(file);
+}
+
+function renderCocoReviewStatus() {
+  const review = state?.automation_review;
+  if (!review) {
+    $("#cocoReviewStatusPill").textContent = "Not imported";
+    $("#cocoReviewStatusPill").classList.remove("override");
+    $("#cocoReviewSummary").textContent = "No CoCo review has been imported for this table.";
+    $("#cocoReviewWarnings").classList.add("hidden");
+    $("#cocoReviewWarnings").innerHTML = "";
+    return;
+  }
+  const imported = new Date(review.imported_at);
+  const importedLabel = Number.isNaN(imported.getTime()) ? "unknown time" : imported.toLocaleString();
+  const rowCount = review.evidence?.row_count;
+  const warningCount = Array.isArray(review.warnings) ? review.warnings.length : 0;
+  $("#cocoReviewStatusPill").textContent = "Recommendations imported";
+  $("#cocoReviewStatusPill").classList.add("override");
+  $("#cocoReviewSummary").textContent = `Imported ${importedLabel} · ${review.assessed_columns || 0} columns assessed · row count ${rowCount ?? "not supplied"} · ${warningCount} warning${warningCount === 1 ? "" : "s"}. Human confirmations remain incomplete.`;
+  $("#cocoReviewWarnings").classList.toggle("hidden", warningCount === 0);
+  $("#cocoReviewWarnings").innerHTML = (review.warnings || []).map(warning => `<li>${escapeHtml(warning)}</li>`).join("");
+}
+
 function switchStep(step) {
   $$(".step-link").forEach(button => button.classList.toggle("active", button.dataset.step === step));
   $$(".step-panel").forEach(panel => panel.classList.toggle("active", panel.dataset.panel === step));
@@ -269,9 +634,11 @@ function selectTable(tableName, imported = null) {
 function renderCatalogueDetails() {
   if (!selectedTable || !state) {
     $("#schemaReviewCard").classList.add("hidden");
+    $("#cocoReviewCard").classList.add("hidden");
     return;
   }
   $("#schemaReviewCard").classList.remove("hidden");
+  $("#cocoReviewCard").classList.remove("hidden");
   const columns = currentColumns();
   const suggestions = columns.filter(suggestionFor);
   $("#selectedTableName").textContent = selectedTable.name;
@@ -293,6 +660,7 @@ function renderCatalogueDetails() {
       <td><input class="schema-include" type="checkbox" ${column.included ? "checked" : ""} aria-label="Include ${escapeHtml(column.name)}"></td>
     </tr>`).join("");
   $("#schemaReviewSummary").textContent = `${columns.length} included · ${state.schema_overrides.excluded_catalog_columns.length} excluded`;
+  renderCocoReviewStatus();
 }
 
 function renderMasking() {
@@ -346,7 +714,7 @@ function renderQuality() {
   $("#dmfSchedule").value = state.quality.schedule || "";
   $("#baselineNote").value = state.baseline.expected_rows_note || "";
   $("#qualityExpected").value = state.quality.expected_notes || "";
-  const timestampColumns = columns.filter(column => column.type === "TIMESTAMP_NTZ");
+  const timestampColumns = columns.filter(column => String(column.type).startsWith("TIMESTAMP"));
   $("#freshnessColumn").innerHTML = `<option value="">No freshness DMF</option>` + timestampColumns.map(column => `<option value="${escapeHtml(column.name)}" ${state.quality.freshness_column === column.name ? "selected" : ""}>${escapeHtml(column.name)}</option>`).join("");
   $("#duplicateKeyOptions").innerHTML = checkboxOptions(columns, state.quality.duplicate_key, "duplicate-check");
   $("#nullCountOptions").innerHTML = checkboxOptions(columns, state.quality.null_count_columns, "null-check");
@@ -720,6 +1088,23 @@ function bindEvents() {
     if (!state) return;
     const [, schema, table] = state.table.split(".");
     copyText(`SELECT ORDINAL_POSITION, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE\nFROM DEV.INFORMATION_SCHEMA.COLUMNS\nWHERE TABLE_SCHEMA = '${schema}' AND TABLE_NAME = '${table}'\nORDER BY ORDINAL_POSITION;`, "Live-schema query copied");
+  });
+  $("#downloadCocoKitBtn").addEventListener("click", () => {
+    if (!state) return;
+    const safeName = state.table.replaceAll(".", "_");
+    downloadText(generateCocoReviewKit(), `${safeName}_coco_review_kit.sql`, "application/sql;charset=utf-8");
+    toast("CoCo review kit downloaded");
+  });
+  $("#importCocoReviewBtn").addEventListener("click", () => $("#importCocoReviewInput").click());
+  $("#importCocoReviewInput").addEventListener("change", event => {
+    if (event.target.files[0]) importCocoReview(event.target.files[0]);
+    event.target.value = "";
+  });
+  $("#applyCocoReviewPasteBtn").addEventListener("click", () => {
+    try {
+      applyCocoReview(parseJsonResponse($("#cocoReviewPaste").value));
+      $("#cocoReviewPaste").value = "";
+    } catch (error) { toast(`CoCo import failed: ${error.message}`); }
   });
   $("#quickAddInsertedAt").addEventListener("click", () => {
     if (currentColumns().some(column => column.name === "INSERTED_AT")) return toast("INSERTED_AT is already included");

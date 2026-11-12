@@ -27,6 +27,7 @@ Run JavaScript syntax validation:
 
 ```powershell
 node --check app.js
+node tests/coco-review.test.mjs
 ```
 
 Confirm the static site and catalogue load over HTTP:
@@ -45,6 +46,8 @@ Then complete the checklist in [Testing](docs/TESTING.md).
 - Escape SQL literals and one-line SQL comments.
 - Validate any user input interpolated as an identifier.
 - Preserve JSON import compatibility when possible.
+- Keep CoCo output untrusted: table/version binding, warnings and approval resets must remain enforced.
+- Do not add raw-value sampling to the CoCo review kit.
 - Increment `app_version` when making an incompatible configuration change.
 - Verify all eight generated scripts and the ZIP downloader.
 - Do not commit browser-local draft data.

@@ -10,6 +10,10 @@ flowchart LR
     B --> C[Browser application]
     D[Human governance decisions] --> C
     E[Live Snowflake schema comparison] --> D
+    C --> L[CoCo review-kit download]
+    L --> M[Manual Snowflake and CoCo session]
+    M --> N[Structured review JSON]
+    N --> C
     C --> F[Browser localStorage draft]
     C --> G[Reviewed JSON export]
     C --> H[Eight SQL files]
@@ -35,14 +39,17 @@ There is no application server, API, runtime database or Snowflake connector.
 1. The browser fetches `data/catalog.json` from the same origin.
 2. The selected table initializes a browser-local configuration.
 3. User decisions update in-memory state and `localStorage`.
-4. Export serializes the reviewed state as JSON.
-5. Generation renders SQL strings in memory.
-6. Downloads use browser `Blob` URLs.
-7. ZIP creation uses a local, uncompressed ZIP encoder; no third-party CDN is used.
+4. Optionally, the browser renders a CoCo review kit for manual Snowflake execution and imports the returned JSON as unapproved recommendations.
+5. Export serializes the reviewed state as JSON.
+6. Generation renders SQL strings in memory.
+7. Downloads use browser `Blob` URLs.
+8. ZIP creation uses a local, uncompressed ZIP encoder; no third-party CDN is used.
 
 ## Network behavior
 
 After the static assets are loaded, the application makes no external requests. It does not transmit configurations, table names or decisions to GitHub, Netlify, OpenAI, Snowflake or any analytics service.
+
+The optional CoCo workflow is a manual file handoff controlled by the user. The browser does not initiate or observe the Snowflake/CoCo session.
 
 Netlify naturally receives standard web-server request metadata when serving the static site. No analytics integration is included.
 
@@ -65,6 +72,10 @@ Catalogue fields are untrusted snapshots until compared with the live schema. Th
 ### Human decisions
 
 Human input is trusted only after review. The application provides structural validation, not business approval.
+
+### CoCo recommendations
+
+Imported CoCo JSON is untrusted automation output. The importer binds it to the selected table and contract version, whitelists evidence and tag fields, accepts only bounded aggregate expressions, records warnings and resets every human confirmation. It can prefill review fields but cannot satisfy approval gates.
 
 ### Generated SQL
 
